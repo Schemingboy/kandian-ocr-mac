@@ -13,3 +13,6 @@ venv/
 # 本地配置（含用户自填的 token，绝不入库）
 .kandian_ocr.json
 *.local.json
+
+# 内部 AI 工作文档（只留本地给 agent 用，不同步公开仓库）
+AGENTS.md
