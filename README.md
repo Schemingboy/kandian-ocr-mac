@@ -28,7 +28,7 @@
 在装了 Claude Code / Codex 的 Mac 上打开本仓库，把下面这段直接发给 AI 助手：
 
 > 帮我一键安装这个仓库的「看典古籍 OCR」客户端：
-> 1. 检查 python3，缺失就告诉我怎么装
+> 1. 检查 macOS 是否为 13 或更高版本、python3 是否为 3.10-3.14，不满足就告诉我怎么处理
 > 2. 若当前不在仓库目录，先 `git clone https://github.com/Schemingboy/kandian-ocr-mac.git` 并进入
 > 3. 执行 `chmod +x install.sh run.command && ./install.sh`
 > 4. 装完跑 `.venv/bin/python -c "import docx, fitz, requests; import PySide6; print('deps OK')"` 确认依赖
@@ -55,4 +55,4 @@
 
 ## 文件
 
-`kandian_ocr.py` 主程序 · `install.sh` 安装 · `run.command` 启动 · `AGENTS.md` AI 安装指南
+`kandian_ocr.py` 主程序 · `install.sh` 安装 · `run.command` 启动 · `tests/` 自动检查 · `AGENTS.md` AI 安装与维护指南

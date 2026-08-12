@@ -31,6 +31,16 @@ chmod +x install.sh run.command
 - GUI 需要真实显示器，agent 代点不了：让用户**双击 `run.command`**，或终端跑 `.venv/bin/python kandian_ocr.py`
 - 若双击没反应：右键 → 打开（首次 macOS 会拦未签名脚本）；仍不行就终端直接跑看报错
 
+## 修改后验证
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+bash tests/test_install_checks.sh
+bash -n install.sh run.command tests/test_install_checks.sh
+```
+
+如当前机器还没安装 PySide6，可先用系统 Python 运行单元测试；测试会用最小 Qt 替身，不会读取或写入真实 Token。
+
 ## 首次配置（引导用户填，agent 绝不代填 token）
 
 1. 「设置」页填：**邮箱/手机号**（注册看典用的那个）+ **API Token**（官网 → 古籍数字化 → OCR API）
