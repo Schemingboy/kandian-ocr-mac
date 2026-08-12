@@ -21,7 +21,16 @@
 
 3. 启动：双击 `run.command` → 「设置」页填邮箱/手机号 + API Token → 「检查额度」→ PDF 识别
 
-> **想用 AI 一键装？** 在装了 Claude Code / Codex 的 Mac 上打开本仓库，让 agent 读 `AGENTS.md` 照着执行即可，不用手敲命令。
+### 🤖 AI 一键安装（不用手敲命令）
+
+在装了 Claude Code / Codex 的 Mac 上打开本仓库，把下面这段直接发给 AI 助手：
+
+> 帮我一键安装这个仓库的「看典古籍 OCR」客户端：
+> 1. 检查 python3，缺失就告诉我怎么装
+> 2. 若当前不在仓库目录，先 `git clone https://github.com/Schemingboy/kandian-ocr-mac.git` 并进入
+> 3. 执行 `chmod +x install.sh run.command && ./install.sh`
+> 4. 装完跑 `.venv/bin/python -c "import docx, fitz, requests; import PySide6; print('deps OK')"` 确认依赖
+> 5. 完成后告诉我怎么启动，并引导我填 token
 
 ## 常见问题
 
