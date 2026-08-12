@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 虚拟环境
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# 本地配置（含用户自填的 token，绝不入库）
+.kandian_ocr.json
+*.local.json

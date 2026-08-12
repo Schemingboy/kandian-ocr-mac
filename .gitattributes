@@ -1,0 +1,4 @@
+# 强制 shell 脚本 / Python 以 LF 行尾检出，避免 Windows 克隆到 Mac 后 \r 导致 bash 报错
+*.sh    text eol=lf
+*.command text eol=lf
+*.py    text eol=lf
