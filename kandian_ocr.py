@@ -17,17 +17,27 @@
 """
 
 import base64
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import threading
+import unicodedata
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from PySide6 import QtCore, QtWidgets
 
 API_URL = "https://ocr.kandianguji.com/ocr_api"
 STATUS_URL = "https://ocr.kandianguji.com/get_token_status"
 CONFIG_FILE = Path.home() / ".kandian_ocr.json"
+APP_LOCK_FILE = Path.home() / ".kandian_ocr.lock"
 DEFAULT_EMAIL = ""  # 注册账号的邮箱/手机号，由用户在界面里填写，不写死在代码里
 IS_MAC = sys.platform == "darwin"
 
@@ -104,38 +114,87 @@ def check_quota(token, email):
     return True, f"Token 状态：{state} ｜ 已用 {d.get('used_count', '?')} / 总额 {d.get('total_count', '?')}"
 
 
+# ============================ 输出目录 ============================
+PDF_SAMPLE_SIZE = 64 * 1024
+
+
+def pdf_source_identity(pdf_path, open_file=open):
+    """返回轻量来源身份；最多抽样读取 192 KiB，不扫描整份 PDF。"""
+    source_path = Path(pdf_path).expanduser().resolve(strict=False)
+    stat = source_path.stat()
+    size = stat.st_size
+    offsets = sorted({0, max(0, size // 2 - PDF_SAMPLE_SIZE // 2),
+                      max(0, size - PDF_SAMPLE_SIZE)})
+    sample_digest = hashlib.sha256()
+    with open_file(source_path, "rb") as source:
+        for offset in offsets:
+            source.seek(offset)
+            sample_digest.update(str(offset).encode("ascii") + b"\0")
+            sample_digest.update(source.read(PDF_SAMPLE_SIZE))
+    stat_after = source_path.stat()
+    if (stat_after.st_size, stat_after.st_mtime_ns) != (size, stat.st_mtime_ns):
+        raise OSError("PDF 在检查过程中发生变化，请待文件稳定后重试")
+    return {
+        "path": unicodedata.normalize("NFC", os.path.normcase(str(source_path))),
+        "size": size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sample_sha256": sample_digest.hexdigest(),
+    }
+
+
+def pdf_result_dir(pdf_path, out_dir, identity=None):
+    """按来源路径和轻量文件身份返回稳定、隔离的结果目录。"""
+    identity = identity or pdf_source_identity(pdf_path)
+    encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    source_id = hashlib.sha256(encoded).hexdigest()[:12]
+    return Path(out_dir) / f"{Path(pdf_path).stem}__{source_id}"
+
+
 # ============================ 汇总文件 ============================
-def write_summary_txt(page_dir):
-    """把 page_*.txt 合并成 汇总.txt。成功返回 True，失败返回 False。"""
+def write_summary_txt(page_dir, output_path, should_stop):
+    """把逐页结果写入指定的文本汇总临时文件。"""
+    page_dir = Path(page_dir)
+    output_path = Path(output_path)
     try:
-        parts = []
-        for p in sorted(Path(page_dir).glob("page_*.txt")):
-            page_no = int(p.stem.split("_")[1])
-            parts.append(f"【第 {page_no} 页】")
-            parts.append(p.read_text(encoding="utf-8").rstrip("\n"))
-            parts.append("")
-        (Path(page_dir) / "汇总.txt").write_text("\n".join(parts), encoding="utf-8")
+        with output_path.open("w", encoding="utf-8", newline="\n") as summary:
+            for p in sorted(page_dir.glob("page_*.txt")):
+                if should_stop():
+                    return False
+                page_no = int(p.stem.split("_")[1])
+                summary.write(f"【第 {page_no} 页】\n")
+                summary.write(p.read_text(encoding="utf-8").rstrip("\n"))
+                summary.write("\n")
+        if should_stop():
+            return False
         return True
     except Exception:
         return False
 
 
-def write_summary_docx(page_dir):
-    """把 page_*.txt 合并成 汇总.docx（Word）。python-docx 未装或出错时静默返回 False。"""
+def write_summary_docx(page_dir, output_path, should_stop):
+    """把逐页结果写入指定的 Word 汇总临时文件。"""
     try:
         import docx
     except ImportError:
         return False
+    page_dir = Path(page_dir)
+    output_path = Path(output_path)
     try:
         d = docx.Document()
         d.add_heading("汇总", level=1)
-        for p in sorted(Path(page_dir).glob("page_*.txt")):
+        for p in sorted(page_dir.glob("page_*.txt")):
+            if should_stop():
+                return False
             page_no = int(p.stem.split("_")[1])
             d.add_heading(f"第 {page_no} 页", level=2)
             for ln in p.read_text(encoding="utf-8").splitlines():
                 if ln.strip():
                     d.add_paragraph(ln)
-        d.save(str(Path(page_dir) / "汇总.docx"))
+        if should_stop():
+            return False
+        d.save(str(output_path))
+        if should_stop():
+            return False
         return True
     except Exception:
         return False
@@ -145,7 +204,8 @@ def write_summary_docx(page_dir):
 class PdfOcrThread(QtCore.QThread):
     sig_progress = QtCore.Signal(int, int, str)          # 当前页, 总页数, 状态文字
     sig_log = QtCore.Signal(str)
-    sig_done = QtCore.Signal(int, int, str)              # 成功页数, 失败页数, 输出目录
+    sig_done = QtCore.Signal(int, int, int, int, str)    # 成功、跳过、失败、总页数、输出目录
+    sig_cancelled = QtCore.Signal(int, int, int, int, int, str)
     sig_fatal = QtCore.Signal(str)
 
     def __init__(self, token, email, pdf_path, out_dir, params, parent=None):
@@ -155,10 +215,63 @@ class PdfOcrThread(QtCore.QThread):
         self.pdf_path = pdf_path
         self.out_dir = Path(out_dir)
         self.params = params
-        self._stop = False
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()
 
     def stop(self):
-        self._stop = True
+        with self._state_lock:
+            self._stop_event.set()
+
+    def _emit_cancelled(self, processed, total, ok_count, skip_count, fail_count,
+                        fail_list, page_dir):
+        self.sig_log.emit(
+            f"已取消：已处理 {processed}/{total} 页；已完成页已保留，可稍后断点续跑。"
+            f"本次未更新汇总，既有汇总如有则保持不变。结果目录：{page_dir}")
+        for failure in fail_list:
+            self.sig_log.emit("  ✗ " + failure)
+        self.sig_cancelled.emit(
+            processed, total, ok_count, skip_count, fail_count, str(page_dir))
+
+    def _publish_summaries_and_done(self, page_dir, ok_count, skip_count,
+                                    fail_count, total, fail_list):
+        temp_paths = []
+        try:
+            for suffix in (".txt.tmp", ".docx.tmp"):
+                fd, name = tempfile.mkstemp(prefix=".summary-", suffix=suffix, dir=page_dir)
+                os.close(fd)
+                temp_paths.append(Path(name))
+            txt_ok = write_summary_txt(page_dir, temp_paths[0], self._stop_event.is_set)
+            docx_ok = False
+            if txt_ok and not self._stop_event.is_set():
+                docx_ok = write_summary_docx(page_dir, temp_paths[1], self._stop_event.is_set)
+
+            with self._state_lock:
+                if self._stop_event.is_set():
+                    return False
+                if txt_ok and docx_ok:
+                    targets = [page_dir / "汇总.txt", page_dir / "汇总.docx"]
+                    try:
+                        for temp_path, target in zip(temp_paths, targets):
+                            os.replace(temp_path, target)
+                    except Exception:
+                        self.sig_log.emit("（汇总发布失败；请检查磁盘空间和目录权限）")
+                    else:
+                        self.sig_log.emit("已生成文本汇总：汇总.txt")
+                        self.sig_log.emit("已生成 Word 汇总：汇总.docx")
+                else:
+                    self.sig_log.emit("（汇总未更新：文本或 Word 生成失败；既有汇总保持不变）")
+                if self._stop_event.is_set():
+                    return False
+                self.sig_log.emit(
+                    f"完成：成功 {ok_count} 页，跳过 {skip_count} 页，失败 {fail_count} 页。"
+                    f"结果目录：{page_dir}")
+                for failure in fail_list:
+                    self.sig_log.emit("  ✗ " + failure)
+                self.sig_done.emit(ok_count, skip_count, fail_count, total, str(page_dir))
+            return True
+        finally:
+            for temp_path in temp_paths:
+                temp_path.unlink(missing_ok=True)
 
     def run(self):
         try:
@@ -173,25 +286,33 @@ class PdfOcrThread(QtCore.QThread):
             self.sig_fatal.emit(f"无法打开 PDF：{e}")
             return
 
-        pdf_name = Path(self.pdf_path).stem
-        page_dir = self.out_dir / pdf_name
         try:
+            page_dir = pdf_result_dir(self.pdf_path, self.out_dir)
             page_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             self.sig_fatal.emit(f"无法创建输出目录：{e}")
             pdf.close()
             return
 
+        try:
+            self._run_pdf(fitz, pdf, page_dir)
+        except Exception as e:
+            self.sig_fatal.emit(f"识别任务异常终止：{e}")
+        finally:
+            pdf.close()
+
+    def _run_pdf(self, fitz, pdf, page_dir):
+        pdf_name = Path(self.pdf_path).stem
         total = pdf.page_count
         self.sig_log.emit(f"开始识别：{pdf_name}.pdf，共 {total} 页")
-        self.sig_log.emit(f"输出目录：{page_dir}")
+        self.sig_log.emit(f"输出目录：{page_dir}（来源编号用于隔离同名 PDF）")
 
         ok_count = skip_count = fail_count = 0
         fail_list = []
         resume = bool(self.params.get("resume", True))
 
         for i in range(total):
-            if self._stop:
+            if self._stop_event.is_set():
                 self.sig_log.emit("已手动停止。")
                 break
             page_no = i + 1
@@ -236,21 +357,17 @@ class PdfOcrThread(QtCore.QThread):
                 self.sig_log.emit(f"第 {page_no} 页识别失败：{text}")
             self.sig_progress.emit(page_no, total, f"第 {page_no}/{total} 页")
 
-        pdf.close()
+        if self._stop_event.is_set():
+            processed = ok_count + skip_count + fail_count
+            self._emit_cancelled(processed, total, ok_count, skip_count,
+                                 fail_count, fail_list, page_dir)
+            return
 
-        summary_txt = page_dir / "汇总.txt"
-        if write_summary_txt(page_dir):
-            self.sig_log.emit(f"已生成文本汇总：{summary_txt.name}")
-        if write_summary_docx(page_dir):
-            self.sig_log.emit("已生成 Word 汇总：汇总.docx")
-        else:
-            self.sig_log.emit("（未生成 Word：python-docx 未安装或出错；txt 汇总不受影响）")
-
-        self.sig_log.emit(
-            f"完成：成功 {ok_count} 页，跳过 {skip_count} 页，失败 {fail_count} 页。结果目录：{page_dir}")
-        for f in fail_list:
-            self.sig_log.emit("  ✗ " + f)
-        self.sig_done.emit(ok_count, fail_count, str(page_dir))
+        if not self._publish_summaries_and_done(
+                page_dir, ok_count, skip_count, fail_count, total, fail_list):
+            processed = ok_count + skip_count + fail_count
+            self._emit_cancelled(processed, total, ok_count, skip_count,
+                                 fail_count, fail_list, page_dir)
 
 
 class ImageOcrThread(QtCore.QThread):
@@ -290,10 +407,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("看典古籍 OCR · Mac")
         self.cfg = load_config()
         self.thread = None
+        self._threads = []
         self.pdf_path = ""
         self.out_dir = ""
         self.img_path = ""
         self._last_out = ""
+        self._closing = False
 
         tabs = QtWidgets.QTabWidget()
         self.setCentralWidget(tabs)
@@ -479,9 +598,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.btn_quota.setEnabled(False)
         self.lbl_quota.setText("查询中…")
-        self.qt = QuotaThread(token, email)
-        self.qt.sig.connect(self._on_quota)
-        self.qt.start()
+        thread = self._track_thread(QuotaThread(token, email, self))
+        thread.sig.connect(self._on_quota)
+        thread.start()
 
     def _on_quota(self, ok, msg):
         self.btn_quota.setEnabled(True)
@@ -518,11 +637,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "only_plain_text": self.cfg["only_plain_text"],
             "resume": self.cfg["resume"],
         }
-        self.thread = PdfOcrThread(self.cfg["token"], self.cfg["email"],
-                                   self.pdf_path, self.out_dir, params)
+        self.thread = self._track_thread(
+            PdfOcrThread(self.cfg["token"], self.cfg["email"],
+                         self.pdf_path, self.out_dir, params, self))
         self.thread.sig_progress.connect(self._on_progress)
         self.thread.sig_log.connect(self.log.appendPlainText)
         self.thread.sig_done.connect(self._on_pdf_done)
+        self.thread.sig_cancelled.connect(self._on_pdf_cancelled)
         self.thread.sig_fatal.connect(self._on_pdf_fatal)
         self._set_pdf_busy(True)
         self.thread.start()
@@ -532,6 +653,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.thread:
             self.thread.stop()
             self.btn_stop.setEnabled(False)
+            self.lbl_prog.setText("正在取消；当前页处理结束后停止…")
 
     def _set_pdf_busy(self, busy):
         self.btn_start.setEnabled(not busy)
@@ -544,12 +666,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress.setValue(done)
         self.lbl_prog.setText(text)
 
-    def _on_pdf_done(self, ok, fail, out_dir):
+    def _on_pdf_done(self, ok, skipped, fail, total, out_dir):
         self._set_pdf_busy(False)
         self._last_out = out_dir
         self.btn_open.setEnabled(True)
-        self.progress.setValue(self.progress.maximum())
-        self.lbl_prog.setText(f"完成：成功 {ok} 页，失败 {fail} 页")
+        self.progress.setRange(0, total)
+        self.progress.setValue(total)
+        self.lbl_prog.setText(f"完成：新识别 {ok} 页，沿用 {skipped} 页，失败 {fail} 页")
+
+    def _on_pdf_cancelled(self, processed, total, ok, skipped, fail, out_dir):
+        self._set_pdf_busy(False)
+        self._last_out = out_dir
+        self.btn_open.setEnabled(True)
+        self.progress.setRange(0, total)
+        self.progress.setValue(processed)
+        self.lbl_prog.setText(
+            f"已取消：已处理 {processed}/{total} 页（新识别 {ok}，沿用 {skipped}，失败 {fail}）")
 
     def _on_pdf_fatal(self, msg):
         self._set_pdf_busy(False)
@@ -595,9 +727,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "image_size": self.cfg["image_size"],
             "only_plain_text": self.cfg["only_plain_text"],
         }
-        self.img_thread = ImageOcrThread(self.cfg["token"], self.cfg["email"], img_bytes, params)
-        self.img_thread.sig.connect(self._on_img_ocr)
-        self.img_thread.start()
+        thread = self._track_thread(
+            ImageOcrThread(self.cfg["token"], self.cfg["email"], img_bytes, params, self))
+        thread.sig.connect(self._on_img_ocr)
+        thread.start()
 
     def _on_img_ocr(self, ok, text):
         self.btn_img_ocr.setEnabled(True)
@@ -611,21 +744,67 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.clipboard().setText(self.ed_img_result.toPlainText())
 
     # ---------- 退出 ----------
+    def _track_thread(self, thread):
+        self._threads.append(thread)
+        thread.finished.connect(self._on_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        return thread
+
+    def _on_thread_finished(self):
+        thread = self.sender()
+        if thread is not None:
+            thread.wait()
+            self._forget_thread(thread)
+            if self._closing and not self._active_threads():
+                self.close()
+
+    def _forget_thread(self, thread):
+        if thread in self._threads:
+            self._threads.remove(thread)
+
+    def _active_threads(self):
+        return [thread for thread in self._threads if thread.isRunning()]
+
     def closeEvent(self, event):
-        if self.thread is not None and self.thread.isRunning():
-            self.thread.stop()
-            self.thread.wait(3000)
+        active = self._active_threads()
+        if active:
+            for thread in active:
+                if isinstance(thread, PdfOcrThread):
+                    thread.stop()
+            self._closing = True
+            self.setEnabled(False)
+            self.setWindowTitle("看典古籍 OCR · 正在安全退出…")
+            event.ignore()
+            return
         self._collect_cfg()
         save_config(self.cfg)
         event.accept()
 
 
+def acquire_single_instance():
+    """取得应用级文件锁；不支持 fcntl 的环境明确降级为不加锁。"""
+    if fcntl is None:
+        return None
+    lock_file = APP_LOCK_FILE.open("a+")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return False
+    return lock_file
+
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    instance_lock = acquire_single_instance()
+    if instance_lock is False:
+        QtWidgets.QMessageBox.critical(
+            None, "看典古籍 OCR", "看典古籍 OCR 已在运行，请先关闭现有窗口。")
+        return 1
     win = MainWindow()
     win.show()
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
