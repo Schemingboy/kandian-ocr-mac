@@ -1,73 +1,42 @@
 # 看典古籍 OCR · Mac 客户端
 
-复刻 Windows 客户端「看典古籍OCR客户端v2.0.7」的识别流程，让 Mac 也能用同一个账号做古籍 OCR。
+复刻 Windows 版「看典古籍OCR客户端 v2.0.7」流程，让 Mac 也能用同一个账号做古籍 OCR：本地把 PDF 逐页转图 → 调云端 `ocr.kandianguji.com/ocr_api` → 逐页出 txt + 汇总。
 
-## 这是什么
+## 功能
 
-- **PDF 识别**：把 PDF 逐页转成图片，逐页调用看典云端的 OCR 接口（`ocr.kandianguji.com/ocr_api`），每页结果保存成一个 txt，最后生成「汇总.txt」和「汇总.docx」。**中断了可以断点续跑**（已识别的页自动跳过）。
-- **单图识别**：选一张古籍图片直接识别，结果可一键复制。
-- **额度查询**：查你的 Token 还剩多少额度、状态是否正常。
+- **PDF 识别**：逐页 OCR，进度条 + 断点续跑，输出每页 txt、汇总.txt、汇总.docx
+- **单图识别**：选一张古籍图直接识别，可复制
+- **额度查询**：看 token 剩余额度与状态
 
-原理和 Windows 版一致：OCR 真正发生在云端，Mac 上只是把图片发过去、收结果。
+## 安装（一次性，约 3 分钟）
 
-## 需要的准备
-
-1. 一台 **macOS** 电脑。
-2. 你在看典官网的 **API Token**（打开官网 → 古籍数字化 → OCR API → 我的 API Token）。邮箱/手机号填你注册账号时用的那个。
-3. Python 3.9 或更高（下面第 1 步会装）。
-
-## 安装步骤（一次性，约 3 分钟）
-
-1. **装 Python**：打开 <https://www.python.org/downloads/>，下载 macOS 版并安装，安装界面**务必勾选 “Add Python to PATH”**。
-2. 把整个「看典OCR-Mac」文件夹拷到 Mac 上（放哪都行）。
-3. 打开「终端」，输入下面命令（每行一次回车）：
+1. 装 Python：<https://www.python.org/downloads/>（勾选 Add to PATH）
+2. 拿代码并安装：
 
    ```bash
-   cd ~/Desktop/看典OCR-Mac          # 路径按你实际放的改
-   chmod +x install.sh run.command
-   ./install.sh
+   git clone https://github.com/Schemingboy/kandian-ocr-mac.git
+   cd kandian-ocr-mac
+   chmod +x install.sh run.command && ./install.sh
    ```
 
-   看到「✅ 安装完成」就装好了。
+3. 启动：双击 `run.command` → 「设置」页填邮箱/手机号 + API Token → 「检查额度」→ PDF 识别
 
-> 如果系统弹「无法验证开发者」之类的提示，右键点 `run.command` → 打开，或到「系统设置 → 隐私与安全性」里允许。`install.sh` 同理：`chmod +x` 后右键 → 打开。
-
-## 日常使用
-
-双击 **run.command** 启动（第一次可能提示允许，右键 → 打开即可）。之后：
-
-1. **「设置」页**：填邮箱和 API Token → 点「保存设置」→ 点「检查额度」确认状态正常（显示「已通过 · 可正常使用」）。
-2. **「PDF 识别」页**：选 PDF 文件 → 选保存文件夹 → 调好参数（一般默认即可）→ 点「开始识别」。
-3. 完成后点「打开结果文件夹」，里面是：
-
-   ```
-   你的PDF名/
-     page_0001.txt    每页的识别文字
-     page_0002.txt
-     ...
-     汇总.txt          所有页合在一起（每页带页号分隔）
-     汇总.docx         同样内容的 Word 文档
-   ```
+> **想用 AI 一键装？** 在装了 Claude Code / Codex 的 Mac 上打开本仓库，让 agent 读 `AGENTS.md` 照着执行即可，不用手敲命令。
 
 ## 常见问题
 
 | 问题 | 处理 |
 |---|---|
-| 提示「token无效」 | Token 填错或已失效。回官网重新复制 Token，别带空格。 |
-| 提示「额度不足」 | 在官网 OCR API 页面充值或看广告加当日额度。 |
-| 某几页失败、其余正常 | 正常现象，日志会标出失败页码；重跑时勾「跳过已有结果」即可只补失败的页。 |
-| 竖排古籍识别乱序 | 在参数里把「排版」改成「竖排」。 |
-| Mac 是 Intel 还是 M 芯片 | 两种都支持，脚本会自动适配。 |
+| token无效 | 回官网「古籍数字化 → OCR API」重新复制 |
+| 额度不足 | 官网 OCR API 页面充值 / 看广告加当日额度 |
+| 个别页失败 | 正常，重跑勾「跳过已有结果」只补失败页 |
+| 竖排识别乱序 | 参数里「排版」选竖排 |
 
-## 细节说明
+## 安全
 
-- Token 和邮箱保存在本机 `~/.kandian_ocr.json`，只发往看典官方接口，不会上传到别处。
-- 识别结果仅作参考，和官网一样标注「不具权威性」，关键内容请人工核对。
-- 官方独立的 PDF 任务接口（`pdf_ocr_api`）文档标注为「暂时停用」，本工具用的是 Windows 客户端同款方案：逐页走单图接口 `ocr_api`，稳定可用。
+- token 只存本机 `~/.kandian_ocr.json`（已 .gitignore），只发往看典官方接口
+- 识别结果仅供参考，关键内容人工核对
 
-## 文件清单
+## 文件
 
-- `kandian_ocr.py`  — 主程序（Python + PySide6）
-- `install.sh`      — 一键安装（装依赖）
-- `run.command`     — 双击启动器
-- `README.md`       — 本说明
+`kandian_ocr.py` 主程序 · `install.sh` 安装 · `run.command` 启动 · `AGENTS.md` AI 安装指南
