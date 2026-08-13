@@ -16,7 +16,18 @@
 - **额度**：OCR API 页面可付费充值（约 0.015 元/次），或扫码看广告加当日额度
 - **网页版备用**：不方便装客户端时，浏览器打开官网「古籍数字化」页也能在线识别（PDF / 图片），流程和本客户端一致
 
-## 安装（一次性，约 3 分钟）
+## 下载客户端（推荐）
+
+在 [GitHub Releases](https://github.com/Schemingboy/kandian-ocr-mac/releases) 下载与 Mac 对应的压缩包：
+
+- Apple M1 / M2 / M3 / M4 / M5：`Kandian-OCR-macOS-arm64.zip`
+- Intel 处理器：`Kandian-OCR-macOS-x86_64.zip`
+
+解压后把 `看典古籍OCR.app` 拖进“应用程序”，以后直接双击启动。客户端已包含 Python 和全部依赖，不需要安装 Python，也不需要运行命令。
+
+由于当前版本没有购买 Apple 开发者签名，第一次启动请按住 Control 点击应用 → **打开** → **打开**；如果仍被拦截，到“系统设置 → 隐私与安全性”点击 **仍要打开**。以后即可正常双击。
+
+## 从源码安装（开发备用）
 
 要求：macOS 13 或更高版本、Python 3.10-3.14（低于 3.15）。已有 `.venv` 版本或架构与当前 `python3` 不一致时，安装脚本会在下载依赖前明确提示删除并重建。Apple Silicon 上用 Rosetta 运行 x86_64 Python 时，配套的 x86_64 `.venv` 可以正常沿用。
 
@@ -61,6 +72,10 @@
 - 来源编号使用规范路径、文件大小、纳秒修改时间及首/中/尾各最多 64 KiB 抽样，每次最多读取 192 KiB，不会预读整份 PDF。它用于防止正常的同名/替换文件误续跑，不是完整内容校验；若有人刻意保持全部这些字段与抽样内容相同，理论上仍可能得到同一编号
 - 识别结果仅供参考，关键内容人工核对
 
+## 打包客户端
+
+GitHub Actions 可分别生成 Apple 芯片版和 Intel 版下载包。在 Mac 本机开发时也可运行 `./build_app.sh`，成品位于 `dist/看典古籍OCR.app`。
+
 ## 文件
 
-`kandian_ocr.py` 主程序 · `install.sh` 安装 · `run.command` 启动 · `tests/` 自动检查
+`kandian_ocr.py` 主程序 · `build_app.sh` 客户端打包 · `install.sh` 源码安装 · `run.command` 源码启动 · `tests/` 自动检查

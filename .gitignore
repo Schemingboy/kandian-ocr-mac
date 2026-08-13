@@ -14,5 +14,10 @@ venv/
 .kandian_ocr.json
 *.local.json
 
+# macOS 客户端打包产物
+build/
+dist/
+*.spec
+
 # 内部 AI 工作文档（只留本地给 agent 用，不同步公开仓库）
 AGENTS.md

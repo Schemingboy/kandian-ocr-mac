@@ -1,0 +1,43 @@
+name: Build macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            label: Apple Silicon
+          - runner: macos-15-intel
+            arch: x86_64
+            label: Intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build and verify app
+        run: chmod +x build_app.sh && ./build_app.sh
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/看典古籍OCR.app" "Kandian-OCR-macOS-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kandian-OCR-macOS-${{ matrix.arch }}
+          path: Kandian-OCR-macOS-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          retention-days: 30
