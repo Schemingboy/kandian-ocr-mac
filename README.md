@@ -31,7 +31,7 @@
 
 把下面这句话发给 Mac 上的 Codex、Claude Code 或其他 Agent：
 
-> 帮我从这里下载安装适合当前 Mac 芯片的“看典古籍 OCR”客户端，并启动测试：<https://github.com/Schemingboy/kandian-ocr-mac/releases/tag/v1.0.0>
+> 帮我从这里下载安装适合当前 Mac 芯片的“看典古籍 OCR”客户端，并启动测试：<https://github.com/Schemingboy/kandian-ocr-mac/releases/latest>
 
 ## 从源码安装（开发备用）
 
