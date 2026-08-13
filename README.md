@@ -27,6 +27,12 @@
 
 由于当前版本没有购买 Apple 开发者签名，第一次启动请按住 Control 点击应用 → **打开** → **打开**；如果仍被拦截，到“系统设置 → 隐私与安全性”点击 **仍要打开**。以后即可正常双击。
 
+### AI 一键安装
+
+把下面这句话发给 Mac 上的 Codex、Claude Code 或其他 Agent：
+
+> 帮我从这里下载安装适合当前 Mac 芯片的“看典古籍 OCR”客户端，并启动测试：<https://github.com/Schemingboy/kandian-ocr-mac/releases/tag/v1.0.0>
+
 ## 从源码安装（开发备用）
 
 要求：macOS 13 或更高版本、Python 3.10-3.14（低于 3.15）。已有 `.venv` 版本或架构与当前 `python3` 不一致时，安装脚本会在下载依赖前明确提示删除并重建。Apple Silicon 上用 Rosetta 运行 x86_64 Python 时，配套的 x86_64 `.venv` 可以正常沿用。
@@ -41,17 +47,6 @@
    ```
 
 3. 启动：双击 `run.command` → 「设置」页填邮箱/手机号 + API Token → 「检查额度」→ PDF 识别
-
-### 🤖 AI 一键安装（不用手敲命令）
-
-在装了 Claude Code / Codex 的 Mac 上打开本仓库，把下面这段直接发给 AI 助手：
-
-> 帮我一键安装这个仓库的「看典古籍 OCR」客户端：
-> 1. 检查 macOS 是否为 13 或更高版本、python3 是否为 3.10-3.14，不满足就告诉我怎么处理
-> 2. 若当前不在仓库目录，先 `git clone https://github.com/Schemingboy/kandian-ocr-mac.git` 并进入
-> 3. 执行 `chmod +x install.sh run.command && ./install.sh`
-> 4. 装完跑 `.venv/bin/python -c "import docx, fitz, requests; import PySide6; print('deps OK')"` 确认依赖
-> 5. 完成后告诉我怎么启动，并引导我填 token
 
 ## 常见问题
 
